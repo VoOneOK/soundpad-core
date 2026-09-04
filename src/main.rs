@@ -52,10 +52,7 @@ fn main() {
             output_config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 for sample in data {
-                    let a = output_consumer.try_pop().unwrap_or(0.0);
-                    // println!("{}", a);
-                    *sample = a;
-                    // println!("{}", sample);
+                    *sample = output_consumer.try_pop().unwrap_or(0.0);
                 }
             },
             move |err| print!("Output stream error {}", err),
