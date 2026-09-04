@@ -26,6 +26,15 @@ Written fully in Rust. It uses
 
 Project lacks basic soundpad features. It only sends audio stream from microphone to VB Audio **for now**. More core updates coming soon.
 
+## TODO
+
+- support non-f32 configs for input and output
+- add sound functionality (upload, convert, load into memory when needed, mix with input)
+- move resample loop to another thread (mostly to free main thread for ui loop)
+- add microphone switch at any time
+- fix potential under/over-runs
+- check for memory leaks on multi hour test with different conditions
+
 ## Contribution
 
 Any help by anyone is welcome!
