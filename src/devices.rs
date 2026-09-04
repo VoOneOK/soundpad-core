@@ -1,5 +1,5 @@
 use cpal::{
-    Device, DeviceId, Host, StreamConfig,
+    Device, DeviceId, Host, SampleFormat, StreamConfig,
     traits::{DeviceTrait, HostTrait},
 };
 use std::io::{self, Write};
@@ -36,7 +36,7 @@ pub fn get_input_device(host: &Host) -> (Device, StreamConfig) {
         .supported_input_configs()
         .expect("Failed to get input configs");
 
-    let config: cpal::StreamConfig = supported_configs_range
+    let config: StreamConfig = supported_configs_range
         .next()
         .expect("no supported input config?!")
         .with_max_sample_rate()
@@ -71,7 +71,7 @@ fn select_input_device(max_option: usize) -> usize {
     }
 }
 
-pub fn get_output_device(host: &Host) -> (Device, StreamConfig) {
+pub fn get_output_device(host: &Host, input_sample_rate: u32) -> (Device, StreamConfig) {
     let device = host
         .output_devices()
         .expect("Failed to get output devices")
@@ -84,15 +84,37 @@ pub fn get_output_device(host: &Host) -> (Device, StreamConfig) {
     let device_desc = device.description().unwrap();
     println!("Selected: {}", device_desc.name());
 
-    let mut supported_configs_range = device
+    let supported_configs_range = device
         .supported_output_configs()
         .expect("Failed to get output configs");
 
-    let config = supported_configs_range
-        .next()
-        .expect("no supported output config?!")
-        .with_max_sample_rate()
-        .into();
+    let mut best_config: Option<StreamConfig> = None;
+    let mut best_diff = u32::MAX;
 
-    (device, config)
+    for config in supported_configs_range.into_iter() {
+        // f32 only for now
+        if config.sample_format() == SampleFormat::F32 {
+            if config.contains_rate(input_sample_rate) {
+                best_config = Some(
+                    config
+                        .try_with_sample_rate(input_sample_rate)
+                        .unwrap()
+                        .into(),
+                );
+                break;
+            } else {
+                let diff = (input_sample_rate).abs_diff(config.max_sample_rate());
+
+                if diff < best_diff {
+                    best_diff = diff;
+                    best_config = Some(config.with_max_sample_rate().into());
+                }
+            }
+        }
+    }
+
+    (
+        device,
+        best_config.expect("No output stream config found. Can't continue"),
+    )
 }

@@ -16,7 +16,8 @@ fn main() {
     let host = cpal::default_host();
 
     let (input_device, input_config) = devices::get_input_device(&host);
-    let (output_device, output_config) = devices::get_output_device(&host);
+    let (output_device, output_config) =
+        devices::get_output_device(&host, input_config.sample_rate);
 
     println!("Input:");
     println!("  Channels: {}", input_config.channels);
