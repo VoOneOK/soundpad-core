@@ -7,7 +7,14 @@ use ringbuf::{
     wrap::caching::Caching,
 };
 use rubato::{Async, FixedAsync, Indexing, PolynomialDegree, Resampler};
-use std::{sync::Arc, thread, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
 
 type InputConsumer = Caching<Arc<SharedRb<Heap<f32>>>, false, true>;
 type OutputProducer = Caching<Arc<SharedRb<Heap<f32>>>, true, false>;
@@ -25,6 +32,7 @@ pub fn start_resampling_loop(
     config: ResampleConfig,
     mut input_consumer: InputConsumer,
     mut output_producer: OutputProducer,
+    keep_resampling: Arc<AtomicBool>,
 ) {
     let mut resampler = Async::<f32>::new_poly(
         config.ratio,
@@ -45,7 +53,7 @@ pub fn start_resampling_loop(
     let indexing = Indexing::new();
 
     thread::sleep(Duration::from_millis(config.start_delay));
-    loop {
+    while keep_resampling.load(Ordering::Relaxed) {
         match input_consumer.try_pop() {
             Some(sample) => {
                 indata.push(sample);
@@ -92,4 +100,6 @@ pub fn start_resampling_loop(
             }
         }
     }
+
+    println!("Resampling thread stopped");
 }
