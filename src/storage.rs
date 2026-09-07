@@ -12,10 +12,8 @@ pub fn get_storage_paths(qualifier: &str, author: &str, app: &str) -> Result<Sto
     let config_path = path.config_dir().to_path_buf();
     let data_path = path.data_local_dir().to_path_buf();
 
-    fs::create_dir_all(&config_path)
-        .map_err(|_| "Couldn't create config directory.".to_string())?;
-
-    fs::create_dir_all(&data_path).map_err(|_| "Couldn't create data directory.".to_string())?;
+    fs::create_dir_all(&config_path).map_err(|_| "Couldn't create config directory.")?;
+    fs::create_dir_all(&data_path).map_err(|_| "Couldn't create data directory.")?;
 
     Ok((config_path, data_path))
 }
