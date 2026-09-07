@@ -16,6 +16,7 @@ use std::{
 mod devices;
 mod resample;
 mod ring_buffers;
+mod storage;
 
 struct SoundpadSettings {
     input_buffer_divider: usize,
@@ -38,12 +39,24 @@ struct UIData {
 }
 
 fn main() {
+    const QUALIFIER: &str = "net";
+    const AUTHOR: &str = "vooneok";
+    const APP: &str = "open-soundpad-core";
+
     let mut soundpad_settings = SoundpadSettings {
         input_buffer_divider: 5,
         output_buffer_divider: 5,
         resampling_chunk_size: 2024,
         resampling_start_delay_ms: 100,
         resampling_buffer_fill_retry_delay_ms: 1,
+    };
+
+    let (config_dir, data_dir) = match storage::get_storage_paths(QUALIFIER, AUTHOR, APP) {
+        Ok(val) => val,
+        Err(error) => {
+            println!("{}", error);
+            return;
+        }
     };
 
     let host = cpal::default_host();
