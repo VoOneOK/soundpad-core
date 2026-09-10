@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 pub struct Sound {
     uuid: String,
     name: String,
-    file_path: String, // Keybinds later
 }
 
 #[derive(Serialize, Deserialize)]
