@@ -35,7 +35,7 @@ struct IO {
     channels: u16,
 }
 
-struct UIData {
+struct UIContext {
     input: IO,
     output: IO,
     ratio: f64,
@@ -151,7 +151,7 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     let input_name = input_device.description().unwrap().name().to_string();
     let output_name = output_device.description().unwrap().name().to_string();
 
-    let ui_data = UIData {
+    let ui_context = UIContext {
         input: IO {
             name: input_name,
             rate: input_config.sample_rate,
@@ -165,7 +165,36 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
         ratio: resampling_ratio,
     };
 
-    let is_exiting = run_ui(ui_data);
+    let mut last_output = String::new();
+
+    let is_exiting: bool = loop {
+        let command = match run_ui(&ui_context, &last_output) {
+            Ok(val) => val,
+            Err(err) => {
+                last_output = err;
+                continue;
+            }
+        };
+
+        let parts: Vec<&str> = command.split_whitespace().collect();
+
+        let Some(first) = parts.first() else {
+            last_output = String::from("No command entered");
+            continue;
+        };
+
+        match *first {
+            "exit" => {
+                break true;
+            }
+            "restart" => {
+                break false;
+            }
+            _ => {
+                last_output = format!("No command \"{}\"", parts[0]);
+            }
+        }
+    };
 
     keep_resampling.store(false, Ordering::Relaxed);
     let _ = resample_thread.join();
@@ -173,54 +202,36 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     is_exiting
 }
 
-fn run_ui(data: UIData) -> bool {
-    let mut last_output = String::new();
+fn run_ui(context: &UIContext, last_output: &str) -> Result<String, String> {
+    println!("{}[2J", 27 as char);
 
-    loop {
-        println!("{}[2J", 27 as char);
+    println!("Commands                                         | State");
+    println!(
+        "  exit - exits soundpad                          |   Input: {} ({} * {})",
+        context.input.name, context.input.channels, context.input.rate,
+    );
+    println!(
+        "  restart - restarts app                         |   Output: {} ({} * {})",
+        context.output.name, context.output.channels, context.output.rate,
+    );
+    println!(
+        "  upload x path_to_file - upload sound to slot x |   Ratio: {:.6}",
+        context.ratio
+    );
+    println!("  play x - play sound x                          |   ");
 
-        println!("Commands                                         | State");
-        println!(
-            "  exit - exits soundpad                          |   Input: {} ({} * {})",
-            data.input.name, data.input.channels, data.input.rate,
-        );
-        println!(
-            "  restart - restarts app                         |   Output: {} ({} * {})",
-            data.output.name, data.output.channels, data.output.rate,
-        );
-        println!(
-            "  upload x path_to_file - upload sound to slot x |   Ratio: {:.6}",
-            data.ratio
-        );
-        println!("  play x - play sound x                          |   ");
+    println!("{}", last_output);
+    print!("> ");
+    io::stdout().flush().unwrap();
 
-        println!("{}", last_output);
-        print!("> ");
-        io::stdout().flush().unwrap();
+    let mut command = String::new();
 
-        let mut command = String::new();
-
-        match io::stdin().read_line(&mut command) {
-            Ok(_) => {
-                let parts: Vec<&str> = command.split_whitespace().collect();
-
-                match parts[0] {
-                    "exit" => {
-                        return true;
-                    }
-                    "restart" => {
-                        return false;
-                    }
-                    _ => {
-                        last_output = format!("No command \"{}\"", parts[0]);
-                        continue;
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Input error: {}. Try again", e);
-                continue;
-            }
+    match io::stdin().read_line(&mut command) {
+        Ok(_) => {
+            return Ok(command);
+        }
+        Err(e) => {
+            return Err(format!("Input error: {}. Try again", e));
         }
     }
 }
