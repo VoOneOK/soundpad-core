@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize)]
 pub struct Sound {
-    uuid: String,
-    name: String,
+    pub uuid: String,
+    pub name: String,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SoundsConfig {
-    sounds: Vec<Sound>,
+    pub sounds: Vec<Sound>,
 }
 
 type StoragePaths = (PathBuf, PathBuf);
