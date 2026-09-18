@@ -6,12 +6,16 @@ This is a bare CLI implementation for my future project: "**Open Soundpad**" (co
 
 ## Stack
 
-Written fully in Rust. It uses
+Written fully in `Rust`. It uses
 
 - [VB Audio](https://vb-audio.com/Cable/) for fake microphone simulation on Windows
+- [FFMPEG](https://vb-audio.com/Cable/) for copying sounds as wavs
 - [cpal](https://crates.io/crates/cpal) for capturing input and streaming output
 - [rubato](https://crates.io/crates/rubato) for audio resampling
 - [ringbuf](https://crates.io/crates/ringbuf) for ring buffering samples in different stages
+- [directories](https://crates.io/crates/directories) for getting config and data directories
+- [serde and serde_json](https://crates.io/crates/serde) for parsing json configs
+- [uuid](https://crates.io/crates/uuid) for generating uuids for sounds
 
 ## Under the hood
 
@@ -30,8 +34,6 @@ Project lacks basic soundpad features. It only sends audio stream from microphon
 
 - support non-f32 configs for input and output
 - add sound functionality (upload, convert, load into memory when needed, mix with input)
-- move resample loop to another thread (mostly to free main thread for ui loop)
-- add microphone switch at any time
 - fix potential under/over-runs
 - check for memory leaks on multi hour test with different conditions
 
