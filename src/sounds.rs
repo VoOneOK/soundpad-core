@@ -1,6 +1,6 @@
-use std::{path::PathBuf, process::Command};
+use std::{path::Path, path::PathBuf, process::Command};
 
-pub fn upload_sound(id: &str, file_path_str: &str, target_dir: PathBuf) -> Result<String, String> {
+pub fn upload_sound(id: &str, file_path_str: &str, target_dir: &Path) -> Result<String, String> {
     let file_path = PathBuf::from(file_path_str);
     let file_exist = file_path.try_exists().unwrap_or(false);
 
@@ -8,7 +8,7 @@ pub fn upload_sound(id: &str, file_path_str: &str, target_dir: PathBuf) -> Resul
         return Err("File doesn't exist".to_string());
     }
 
-    let target_path = target_dir.clone().join(format!("{id}.wav"));
+    let target_path = target_dir.join("sounds").join(format!("{id}.wav"));
 
     Command::new("ffmpeg")
         .args([
@@ -19,6 +19,7 @@ pub fn upload_sound(id: &str, file_path_str: &str, target_dir: PathBuf) -> Resul
             "-ar",
             "48000",
             "-ac",
+            "2",
             target_path.to_str().unwrap(),
         ])
         .output()
