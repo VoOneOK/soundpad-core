@@ -5,7 +5,6 @@ use cpal::{
 };
 use ringbuf::traits::{Consumer, Producer};
 use std::{
-    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -26,8 +25,7 @@ struct SoundpadSettings {
     resampling_chunk_size: usize,
     resampling_start_delay_ms: u64,
     resampling_buffer_fill_retry_delay_ms: u64,
-    config_dir: PathBuf,
-    data_dir: PathBuf,
+    storage_paths: storage::StoragePaths,
 }
 
 fn main() {
@@ -35,7 +33,7 @@ fn main() {
     const AUTHOR: &str = "vooneok";
     const APP: &str = "open-soundpad-core";
 
-    let (config_dir, data_dir) = match storage::get_storage_paths(QUALIFIER, AUTHOR, APP) {
+    let storage_paths = match storage::storage_paths(QUALIFIER, AUTHOR, APP) {
         Ok(val) => val,
         Err(error) => {
             println!("{}", error);
@@ -49,8 +47,7 @@ fn main() {
         resampling_chunk_size: 2024,
         resampling_start_delay_ms: 100,
         resampling_buffer_fill_retry_delay_ms: 1,
-        config_dir,
-        data_dir,
+        storage_paths,
     };
 
     let host = cpal::default_host();
@@ -63,7 +60,8 @@ fn main() {
 }
 
 fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
-    let mut sounds_config = match storage::read_sounds_config(&settings.config_dir) {
+    let mut sounds_config = match storage::read_sounds_config(&settings.storage_paths.config.sounds)
+    {
         Ok(val) => val,
         Err(error) => {
             println!("{}", error);
