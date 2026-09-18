@@ -11,10 +11,12 @@ use std::{
     },
     thread,
 };
+use uuid::Uuid;
 
 mod devices;
 mod resample;
 mod ring_buffers;
+mod sounds;
 mod storage;
 mod ui;
 
@@ -181,6 +183,38 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
             }
             "restart" => {
                 break false;
+            }
+            "upload" => {
+                if parts.len() < 3 {
+                    last_output = "Provide name and path to file".into();
+                    continue;
+                }
+
+                let sound_id = Uuid::new_v4();
+
+                if let Err(err) = sounds::upload_sound(
+                    &sound_id.to_string(),
+                    parts[2],
+                    &settings.storage_paths.data.sounds_dir,
+                ) {
+                    last_output = err;
+                    continue;
+                }
+
+                sounds_config.sounds.push(storage::Sound {
+                    uuid: sound_id.to_string(),
+                    name: String::from(parts[1]),
+                });
+
+                if let Err(err) = storage::write_sounds_config(
+                    &settings.storage_paths.config.sounds,
+                    &sounds_config,
+                ) {
+                    last_output = err;
+                    continue;
+                }
+
+                last_output = format!("Uploaded {} ({})", parts[1], sound_id);
             }
             _ => {
                 last_output = format!("No command \"{}\"", parts[0]);
