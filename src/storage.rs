@@ -79,3 +79,10 @@ pub fn read_sounds_config(sounds_config: &PathBuf) -> Result<SoundsConfig, Strin
 
     Ok(sounds_data)
 }
+
+pub fn verify_sounds(sounds: &mut Vec<Sound>, sounds_dir: &Path) {
+    sounds.retain(|sound| {
+        let sound_path = sounds_dir.join(format!("{}.wav", sound.uuid));
+        sound_path.try_exists().unwrap_or(false)
+    });
+}

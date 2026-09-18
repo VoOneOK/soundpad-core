@@ -69,6 +69,11 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
         }
     };
 
+    storage::verify_sounds(
+        &mut sounds_config.sounds,
+        &settings.storage_paths.data.sounds_dir,
+    );
+
     let (input_device, input_config) = devices::get_input_device(&host);
     let (output_device, output_config) =
         devices::get_output_device(&host, input_config.sample_rate);
