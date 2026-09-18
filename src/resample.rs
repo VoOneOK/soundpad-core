@@ -19,6 +19,7 @@ use std::{
 type InputConsumer = Caching<Arc<SharedRb<Heap<f32>>>, false, true>;
 type OutputProducer = Caching<Arc<SharedRb<Heap<f32>>>, true, false>;
 
+#[derive(Debug)]
 pub struct ResampleConfig {
     pub input_channels: usize,
     pub output_channels: usize,

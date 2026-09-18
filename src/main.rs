@@ -19,6 +19,7 @@ mod resample;
 mod ring_buffers;
 mod storage;
 
+#[derive(Debug)]
 struct SoundpadSettings {
     input_buffer_divider: usize,
     output_buffer_divider: usize,
@@ -29,12 +30,14 @@ struct SoundpadSettings {
     data_dir: PathBuf,
 }
 
+#[derive(Debug)]
 struct IO {
     name: String,
     rate: u32,
     channels: u16,
 }
 
+#[derive(Debug)]
 struct UIContext {
     input: IO,
     output: IO,
