@@ -5,7 +5,6 @@ use cpal::{
 };
 use ringbuf::traits::{Consumer, Producer};
 use std::{
-    io::{self, Write as _},
     path::PathBuf,
     sync::{
         Arc,
@@ -18,6 +17,7 @@ mod devices;
 mod resample;
 mod ring_buffers;
 mod storage;
+mod ui;
 
 #[derive(Debug)]
 struct SoundpadSettings {
@@ -28,20 +28,6 @@ struct SoundpadSettings {
     resampling_buffer_fill_retry_delay_ms: u64,
     config_dir: PathBuf,
     data_dir: PathBuf,
-}
-
-#[derive(Debug)]
-struct IO {
-    name: String,
-    rate: u32,
-    channels: u16,
-}
-
-#[derive(Debug)]
-struct UIContext {
-    input: IO,
-    output: IO,
-    ratio: f64,
 }
 
 fn main() {
@@ -154,13 +140,13 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     let input_name = input_device.description().unwrap().name().to_string();
     let output_name = output_device.description().unwrap().name().to_string();
 
-    let ui_context = UIContext {
-        input: IO {
+    let ui_context = ui::UIContext {
+        input: ui::UIDevice {
             name: input_name,
             rate: input_config.sample_rate,
             channels: input_config.channels,
         },
-        output: IO {
+        output: ui::UIDevice {
             name: output_name,
             rate: output_config.sample_rate,
             channels: output_config.channels,
@@ -171,7 +157,7 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     let mut last_output = String::new();
 
     let is_exiting: bool = loop {
-        let command = match run_ui(&ui_context, &last_output) {
+        let command = match ui::run_ui(&ui_context, &last_output) {
             Ok(val) => val,
             Err(err) => {
                 last_output = err;
@@ -203,38 +189,4 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     let _ = resample_thread.join();
 
     is_exiting
-}
-
-fn run_ui(context: &UIContext, last_output: &str) -> Result<String, String> {
-    println!("{}[2J", 27 as char);
-
-    println!("Commands                                         | State");
-    println!(
-        "  exit - exits soundpad                          |   Input: {} ({} * {})",
-        context.input.name, context.input.channels, context.input.rate,
-    );
-    println!(
-        "  restart - restarts app                         |   Output: {} ({} * {})",
-        context.output.name, context.output.channels, context.output.rate,
-    );
-    println!(
-        "  upload x path_to_file - upload sound to slot x |   Ratio: {:.6}",
-        context.ratio
-    );
-    println!("  play x - play sound x                          |   ");
-
-    println!("{}", last_output);
-    print!("> ");
-    io::stdout().flush().unwrap();
-
-    let mut command = String::new();
-
-    match io::stdin().read_line(&mut command) {
-        Ok(_) => {
-            return Ok(command);
-        }
-        Err(e) => {
-            return Err(format!("Input error: {}. Try again", e));
-        }
-    }
 }
