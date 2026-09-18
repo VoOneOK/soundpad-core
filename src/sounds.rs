@@ -8,7 +8,7 @@ pub fn upload_sound(id: &str, file_path_str: &str, target_dir: &Path) -> Result<
         return Err("File doesn't exist".to_string());
     }
 
-    let target_path = target_dir.join("sounds").join(format!("{id}.wav"));
+    let target_path = target_dir.join(format!("{id}.wav"));
 
     Command::new("ffmpeg")
         .args([
