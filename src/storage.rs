@@ -80,6 +80,15 @@ pub fn read_sounds_config(sounds_config: &PathBuf) -> Result<SoundsConfig, Strin
     Ok(sounds_data)
 }
 
+pub fn write_sounds_config(path: &Path, new_config: &SoundsConfig) -> Result<(), String> {
+    let new_json = serde_json::to_string_pretty(new_config)
+        .map_err(|err| format!("Failed to generate sounds config: {err}"))?;
+
+    fs::write(path, new_json).map_err(|err| format!("Failed to write sounds config: {err}"))?;
+
+    Ok(())
+}
+
 pub fn verify_sounds(sounds: &mut Vec<Sound>, sounds_dir: &Path) {
     sounds.retain(|sound| {
         let sound_path = sounds_dir.join(format!("{}.wav", sound.uuid));
