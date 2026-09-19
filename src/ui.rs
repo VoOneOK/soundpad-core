@@ -31,6 +31,7 @@ pub fn run_ui(context: &UIContext, last_output: &str) -> Result<String, String> 
         context.ratio
     );
     println!("  play x - play sound x                          |   ");
+    println!("  list - list sounds                             |   ");
 
     println!("{}", last_output);
     print!("> ");

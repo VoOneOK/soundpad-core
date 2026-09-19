@@ -4,6 +4,7 @@ use cpal::{
     traits::{DeviceTrait, StreamTrait},
 };
 use ringbuf::traits::{Consumer, Producer};
+use std::fmt::Write;
 use std::{
     sync::{
         Arc,
@@ -215,6 +216,19 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
                 }
 
                 last_output = format!("Uploaded {} ({})", parts[1], sound_id);
+            }
+            "list" => {
+                if sounds_config.sounds.is_empty() {
+                    last_output = "No sounds uploaded".into();
+                    continue;
+                }
+
+                last_output.clear();
+                for sound in &sounds_config.sounds {
+                    let _ = writeln!(last_output, "{} ({})", sound.name, sound.uuid);
+                }
+                last_output.pop();
+                continue;
             }
             _ => {
                 last_output = format!("No command \"{}\"", parts[0]);
