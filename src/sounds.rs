@@ -20,6 +20,8 @@ pub fn upload_sound(id: &str, file_path_str: &str, target_dir: &Path) -> Result<
             "48000",
             "-ac",
             "2",
+            "-c:a",
+            "pcm_f32le",
             target_path.to_str().unwrap(),
         ])
         .output()
