@@ -7,6 +7,7 @@ edition = "2024"
 audioadapter-buffers = "5.2.0"
 cpal = "0.18"
 directories = "6.0.0"
+hound = "3.5.1"
 ringbuf = "0.5.1"
 rubato = "5.0.0"
 serde = { version = "1.0.229", features = ["derive"] }
