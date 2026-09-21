@@ -28,6 +28,7 @@ struct SoundpadSettings {
     resampling_chunk_size: usize,
     resampling_start_delay_ms: u64,
     resampling_buffer_fill_retry_delay_ms: u64,
+    max_preload_size_mb: u32,
     storage_paths: storage::StoragePaths,
 }
 
@@ -50,6 +51,7 @@ fn main() {
         resampling_chunk_size: 2024,
         resampling_start_delay_ms: 100,
         resampling_buffer_fill_retry_delay_ms: 1,
+        max_preload_size_mb: 5,
         storage_paths,
     };
 
@@ -72,9 +74,10 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
         }
     };
 
-    storage::verify_sounds(
+    let clips = storage::verify_and_load_sounds(
         &mut sounds_config.sounds,
         &settings.storage_paths.data.sounds_dir,
+        (settings.max_preload_size_mb * 1024 * 1024 / 4) as usize,
     );
 
     let (input_device, input_config) = devices::get_input_device(&host);

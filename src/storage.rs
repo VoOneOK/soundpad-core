@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -29,6 +30,20 @@ pub struct Sound {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SoundsConfig {
     pub sounds: Vec<Sound>,
+}
+
+#[derive(Debug)]
+pub enum Clip {
+    Preloaded(Vec<f32>),
+    Partial {
+        head: Vec<f32>,
+        path: PathBuf,
+        samples_read: usize,
+    },
+    NotLoaded {
+        error: String,
+        path: PathBuf,
+    },
 }
 
 pub fn storage_paths(qualifier: &str, author: &str, app: &str) -> Result<StoragePaths, String> {
@@ -89,9 +104,55 @@ pub fn write_sounds_config(path: &Path, new_config: &SoundsConfig) -> Result<(),
     Ok(())
 }
 
-pub fn verify_sounds(sounds: &mut Vec<Sound>, sounds_dir: &Path) {
+pub fn verify_and_load_sounds(
+    sounds: &mut Vec<Sound>,
+    sounds_dir: &Path,
+    max_samples: usize,
+) -> HashMap<String, Clip> {
+    let mut preloaded: HashMap<String, Clip> = HashMap::new();
+
     sounds.retain(|sound| {
         let sound_path = sounds_dir.join(format!("{}.wav", sound.uuid));
-        sound_path.try_exists().unwrap_or(false)
+        if !sound_path.try_exists().unwrap_or(false) {
+            return false;
+        }
+
+        let mut reader = hound::WavReader::open(&sound_path).unwrap();
+        let samples: Vec<f32> = match reader
+            .samples::<f32>()
+            .take(max_samples)
+            .collect::<Result<_, _>>()
+        {
+            Ok(val) => val,
+            Err(err) => {
+                preloaded.insert(
+                    sound.uuid.clone(),
+                    Clip::NotLoaded {
+                        error: format!("Failed to preload: {}", err),
+                        path: sound_path,
+                    },
+                );
+                return true;
+            }
+        };
+
+        let samples_read = samples.len();
+
+        preloaded.insert(
+            sound.uuid.clone(),
+            if samples_read >= max_samples {
+                Clip::Partial {
+                    head: samples,
+                    path: sound_path,
+                    samples_read,
+                }
+            } else {
+                Clip::Preloaded(samples)
+            },
+        );
+
+        true
     });
+
+    preloaded
 }
