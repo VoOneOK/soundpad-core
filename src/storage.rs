@@ -23,7 +23,7 @@ pub struct StoragePaths {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Sound {
-    pub uuid: String,
+    pub uuid: uuid::Uuid,
     pub name: String,
 }
 
@@ -108,8 +108,8 @@ pub fn verify_and_load_sounds(
     sounds: &mut Vec<Sound>,
     sounds_dir: &Path,
     max_samples: usize,
-) -> HashMap<String, Clip> {
-    let mut preloaded: HashMap<String, Clip> = HashMap::new();
+) -> HashMap<uuid::Uuid, Clip> {
+    let mut preloaded: HashMap<uuid::Uuid, Clip> = HashMap::new();
 
     sounds.retain(|sound| {
         let sound_path = sounds_dir.join(format!("{}.wav", sound.uuid));

@@ -206,7 +206,7 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
                 }
 
                 sounds_config.sounds.push(storage::Sound {
-                    uuid: sound_id.to_string(),
+                    uuid: sound_id,
                     name: String::from(parts[1]),
                 });
 
