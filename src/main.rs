@@ -32,6 +32,12 @@ struct SoundpadSettings {
     storage_paths: storage::StoragePaths,
 }
 
+#[derive(Debug)]
+struct ActiveSound {
+    uuid: uuid::Uuid,
+    position: usize,
+}
+
 fn main() {
     const QUALIFIER: &str = "net";
     const AUTHOR: &str = "vooneok";
@@ -79,6 +85,8 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
         &settings.storage_paths.data.sounds_dir,
         (settings.max_preload_size_mb * 1024 * 1024 / 4) as usize,
     );
+
+    let mut active_sound: Option<ActiveSound> = None;
 
     let (input_device, input_config) = devices::get_input_device(&host);
     let (output_device, output_config) =
@@ -232,6 +240,25 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
                 }
                 last_output.pop();
                 continue;
+            }
+            "play" => {
+                if parts.len() < 2 {
+                    last_output = "Provide sound's uuid".into();
+                    continue;
+                }
+
+                match Uuid::parse_str(parts[1]) {
+                    Ok(sound_id) => {
+                        active_sound = Some(ActiveSound {
+                            uuid: sound_id,
+                            position: 0,
+                        });
+                    }
+                    Err(_err) => {
+                        last_output = "Provide sound's uuid".into();
+                        continue;
+                    }
+                };
             }
             _ => {
                 last_output = format!("No command \"{}\"", parts[0]);
