@@ -92,12 +92,12 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     let (output_device, output_config) =
         devices::get_output_device(&host, input_config.sample_rate);
 
-    let (mut input_producer, input_consumer) = ring_buffers::create_ring_buffer::<f32>({
+    let (mut input_producer, mut input_consumer) = ring_buffers::create_ring_buffer::<f32>({
         input_config.sample_rate as usize * input_config.channels as usize
             / settings.input_buffer_divider
     });
 
-    let (output_producer, mut output_consumer) = ring_buffers::create_ring_buffer::<f32>({
+    let (mut output_producer, mut output_consumer) = ring_buffers::create_ring_buffer::<f32>({
         output_config.sample_rate as usize * output_config.channels as usize
             / settings.output_buffer_divider
     });
@@ -148,9 +148,9 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     let resample_thread = thread::spawn(move || {
         resample::start_resampling_loop(
             resample_config,
-            input_consumer,
-            output_producer,
             keep_resampling_clone,
+            || input_consumer.try_pop(),
+            |sample| output_producer.try_push(sample).is_ok(),
         );
     });
 
