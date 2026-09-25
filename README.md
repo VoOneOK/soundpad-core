@@ -28,14 +28,23 @@ Written fully in `Rust`. It uses
 
 ## WIP!!!
 
-Project lacks basic soundpad features. It only sends audio stream from microphone to VB Audio **for now**. More core updates coming soon.
+Soundpad already can play sounds, those are less than 5 mb (~13.5 seconds of audio). Though lots of important stuff is missing. Check the TODO section for the list of features to be implemented
 
-## TODO
+## TODO (first = highest priority right now)
 
+- implement dynamic loading of large sounds (over 5 mb) in a separate thread
+- add check for ffmpeg installed on startup and improve the check for vb audio
+- per sound volume control
+- ability to make changes from ui and hot reload where possible
+- sound uploading in a separate thread (might not be implemented here but definitely will in gui version)
+- skip resampling when input and output configs match (rates, channels, types)
+- make few silent fails more noticeable (ones those maybe should not be silent)
+- add config backups (if read of config failed, attempt to use last stable version)
 - support non-f32 configs for input and output
-- add sound functionality (upload, convert, load into memory when needed, mix with input)
 - fix potential under/over-runs
 - check for memory leaks on multi hour test with different conditions
+
+If you see a todo at the bottom of the list, it does not mean it is not important. Some stuff is pointless right now but will become relevant in the future
 
 ## Contribution
 
