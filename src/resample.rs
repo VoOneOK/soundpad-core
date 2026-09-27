@@ -1,14 +1,19 @@
 use audioadapter_buffers::direct::InterleavedSlice;
 use core::f32;
+use ringbuf::traits::{Consumer, Observer, Producer};
 use rubato::{Async, FixedAsync, Indexing, PolynomialDegree, Resampler};
 use std::{
+    collections::HashMap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
 };
+use uuid::Uuid;
+
+use crate::{ActiveSound, storage::Clip};
 
 #[derive(Debug)]
 pub struct ResampleConfig {
@@ -21,16 +26,123 @@ pub struct ResampleConfig {
     pub unknown_buffer_fullness: f64,
 }
 
-pub enum PoppedSample {
-    Ready(f32),
-    Ended,
-    Waiting,
+type InputConsumer = ringbuf::wrap::caching::Caching<
+    Arc<ringbuf::SharedRb<ringbuf::storage::Heap<f32>>>,
+    false,
+    true,
+>;
+type OutputProducer = ringbuf::wrap::caching::Caching<
+    Arc<ringbuf::SharedRb<ringbuf::storage::Heap<f32>>>,
+    true,
+    false,
+>;
+
+pub fn start_mic_resampling(
+    config: ResampleConfig,
+    flag: Arc<AtomicBool>,
+    mut input_consumer: InputConsumer,
+    mut output_producer: OutputProducer,
+) {
+    let empty_buffer_retry_delay = config.empty_buffer_retry_delay;
+
+    let fill_indata = |indata: &mut Vec<f32>, amount| {
+        while indata.len() < amount {
+            match input_consumer.try_pop() {
+                Some(sample) => indata.push(sample),
+                None => {
+                    thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
+                }
+            }
+        }
+    };
+
+    let push_sample =
+        |sample: f32| -> (bool, f64) { (output_producer.try_push(sample).is_ok(), 0.0) };
+
+    start_resampling_loop(config, flag, fill_indata, push_sample);
+
+    println!("Mic resampling thread stopped");
+}
+
+pub fn start_clips_resampling(
+    config: ResampleConfig,
+    flag: Arc<AtomicBool>,
+    clips: &HashMap<Uuid, Clip>,
+    active_sound: Arc<Mutex<Option<ActiveSound>>>,
+    clip_buffer_len: usize,
+    mut output_producer: OutputProducer,
+) {
+    let empty_buffer_retry_delay = config.empty_buffer_retry_delay;
+
+    let fill_indata = |indata: &mut Vec<f32>, amount| {
+        while indata.len() < amount {
+            let mut active_sound_guard = active_sound.lock().unwrap_or_else(|e| e.into_inner());
+
+            let active_sound = match active_sound_guard.as_mut() {
+                Some(val) => val,
+                _ => {
+                    thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
+                    continue;
+                }
+            };
+
+            let clip = match clips.get(&active_sound.uuid) {
+                Some(val) => val,
+                _ => {
+                    thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
+                    continue;
+                }
+            };
+
+            match clip {
+                Clip::Preloaded(samples) => {
+                    let start_position = active_sound.position;
+
+                    let samples_to_push = amount.min(samples.len() - start_position);
+
+                    for i in 0..samples_to_push {
+                        indata.push(samples[start_position + i]);
+                    }
+
+                    if samples.len() == start_position + samples_to_push {
+                        *active_sound_guard = None;
+                    } else {
+                        active_sound.position += samples_to_push;
+                    }
+
+                    if indata.len() < amount {
+                        indata.resize(amount, 0.0);
+                    }
+                }
+                Clip::Partial {
+                    head: _,
+                    path: _,
+                    samples_read: _,
+                } => {
+                    // TODO
+                    indata.resize(amount, 0.0);
+                }
+                Clip::NotLoaded { error: _, path: _ } => indata.resize(amount, 0.0),
+            };
+        }
+    };
+
+    let push_sample = |sample: f32| -> (bool, f64) {
+        (
+            output_producer.try_push(sample).is_ok(),
+            output_producer.occupied_len() as f64 / clip_buffer_len as f64,
+        )
+    };
+
+    start_resampling_loop(config, flag, fill_indata, push_sample);
+
+    println!("Clips resampling thread stopped");
 }
 
 pub fn start_resampling_loop(
     config: ResampleConfig,
-    keep_resampling: Arc<AtomicBool>,
-    mut pop_sample: impl FnMut() -> PoppedSample,
+    flag: Arc<AtomicBool>,
+    mut fill_indata: impl FnMut(&mut Vec<f32>, usize) -> (),
     mut push_sample: impl FnMut(f32) -> (bool, f64),
 ) {
     let mut resampler = Async::<f32>::new_poly(
@@ -52,31 +164,8 @@ pub fn start_resampling_loop(
     let indexing = Indexing::new();
 
     thread::sleep(Duration::from_millis(config.start_delay));
-    while keep_resampling.load(Ordering::Relaxed) {
-        match pop_sample() {
-            PoppedSample::Ready(sample) => {
-                indata.push(sample);
-            }
-            PoppedSample::Ended => {
-                println!("End reached");
-
-                let indata_len = indata.len();
-
-                println!("{indata_len} {samples_to_read}");
-
-                if indata_len != samples_to_read {
-                    indata.resize(samples_to_read, 0.0);
-                };
-            }
-            PoppedSample::Waiting => {
-                thread::sleep(Duration::from_millis(config.empty_buffer_retry_delay));
-                continue;
-            }
-        }
-
-        if indata.len() < samples_to_read {
-            continue;
-        }
+    while flag.load(Ordering::Relaxed) {
+        fill_indata(&mut indata, samples_to_read);
 
         let input_adapter =
             InterleavedSlice::new(&indata, config.input_channels, frames_to_read).unwrap();
@@ -106,7 +195,7 @@ pub fn start_resampling_loop(
             for i in 0..samples_written.saturating_sub(1) {
                 if push_sample(outdata[i]).0 {
                     ratio = push_sample(outdata[i]).1;
-                };
+                }
             }
 
             ratio
@@ -124,10 +213,8 @@ pub fn start_resampling_loop(
 
         if buffer_fullness > 0.5 {
             thread::sleep(Duration::from_micros(
-                (buffer_fullness * 1000.0 * 800.0) as u64,
+                (buffer_fullness * 1000.0 * 1000.0) as u64,
             ));
         }
     }
-
-    println!("Resampling thread stopped");
 }

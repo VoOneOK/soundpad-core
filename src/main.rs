@@ -3,7 +3,7 @@ use cpal::{
     Host,
     traits::{DeviceTrait, StreamTrait},
 };
-use ringbuf::traits::{Consumer, Observer, Producer};
+use ringbuf::traits::{Consumer, Producer};
 use std::{fmt::Write, sync::Mutex};
 use std::{
     sync::{
@@ -14,7 +14,6 @@ use std::{
 };
 use uuid::Uuid;
 
-use crate::resample::PoppedSample;
 use crate::resample::ResampleConfig;
 
 mod devices;
@@ -62,7 +61,7 @@ fn main() {
         resampling_chunk_size: 2024,
         resampling_start_delay_ms: 100,
         resampling_buffer_fill_retry_delay_ms: 1,
-        max_preload_size_mb: 5,
+        max_preload_size_mb: 90,
         storage_paths,
     };
 
@@ -101,12 +100,12 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     let (output_device, output_config) =
         devices::get_output_device(&host, input_config.sample_rate);
 
-    let (mut input_producer, mut input_consumer) = ring_buffers::create_ring_buffer::<f32>(
+    let (mut input_producer, input_consumer) = ring_buffers::create_ring_buffer::<f32>(
         input_config.sample_rate as usize * input_config.channels as usize
             / settings.input_buffer_divider,
     );
 
-    let (mut output_producer, mut output_consumer) = ring_buffers::create_ring_buffer::<f32>(
+    let (output_producer, mut output_consumer) = ring_buffers::create_ring_buffer::<f32>(
         output_config.sample_rate as usize * output_config.channels as usize
             / settings.output_buffer_divider,
     );
@@ -115,7 +114,7 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
         * output_config.channels as usize
         * settings.clip_buffer_multiplier;
 
-    let (mut clip_producer, mut clip_consumer) =
+    let (clip_producer, mut clip_consumer) =
         ring_buffers::create_ring_buffer::<f32>(clip_buffer_len);
 
     let input_stream = input_device
@@ -167,16 +166,11 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     };
 
     let mic_resample_thread = thread::spawn(move || {
-        resample::start_resampling_loop(
+        resample::start_mic_resampling(
             mic_resample_config,
             mic_flag,
-            || match input_consumer.try_pop() {
-                Some(val) => PoppedSample::Ready(val),
-                _ => PoppedSample::Waiting,
-            },
-            |sample| {
-                (output_producer.try_push(sample).is_ok(), 0.0) // 0.0 for no delay
-            },
+            input_consumer,
+            output_producer,
         );
     });
 
@@ -191,55 +185,13 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     };
 
     let clips_resample_thread = thread::spawn(move || {
-        resample::start_resampling_loop(
+        resample::start_clips_resampling(
             clips_resample_config,
             clips_flag,
-            || {
-                let mut active_sound_guard =
-                    active_sound_clone.lock().unwrap_or_else(|e| e.into_inner());
-
-                if active_sound_guard.is_none() {
-                    return PoppedSample::Waiting;
-                }
-
-                let clip = match clips.get(&active_sound_guard.as_ref().unwrap().uuid) {
-                    Some(val) => val,
-                    _ => {
-                        return PoppedSample::Waiting;
-                    }
-                };
-
-                match clip {
-                    storage::Clip::Preloaded(samples) => {
-                        let position = active_sound_guard.as_ref().unwrap().position;
-
-                        if samples.len() == position {
-                            let val = PoppedSample::Ended;
-                            *active_sound_guard = None;
-                            val
-                        } else {
-                            let val = PoppedSample::Ready(samples[position]);
-                            active_sound_guard.as_mut().unwrap().position += 1;
-                            val
-                        }
-                    }
-                    storage::Clip::Partial {
-                        head: _,
-                        path: _,
-                        samples_read: _,
-                    } => {
-                        // TODO
-                        PoppedSample::Ready(3.0)
-                    }
-                    storage::Clip::NotLoaded { error: _, path: _ } => PoppedSample::Waiting,
-                }
-            },
-            |sample| {
-                (
-                    clip_producer.try_push(sample).is_ok(),
-                    clip_producer.occupied_len() as f64 / clip_buffer_len as f64,
-                )
-            },
+            &clips,
+            active_sound_clone,
+            clip_buffer_len,
+            clip_producer,
         );
     });
 
