@@ -45,7 +45,11 @@ pub fn start_mic_resampling(
 ) {
     let empty_buffer_retry_delay = config.empty_buffer_retry_delay;
 
-    let fill_indata = |indata: &mut Vec<f32>, amount| {
+    let fill_indata = |indata: &mut Vec<f32>, amount| -> bool {
+        if !flag.load(Ordering::Relaxed) {
+            return true;
+        }
+
         while indata.len() < amount {
             match input_consumer.try_pop() {
                 Some(sample) => indata.push(sample),
@@ -54,12 +58,14 @@ pub fn start_mic_resampling(
                 }
             }
         }
+
+        false
     };
 
     let push_sample =
         |sample: f32| -> (bool, f64) { (output_producer.try_push(sample).is_ok(), 0.0) };
 
-    start_resampling_loop(config, flag, fill_indata, push_sample);
+    start_resampling_loop(config, fill_indata, push_sample);
 
     println!("Mic resampling thread stopped");
 }
@@ -74,8 +80,12 @@ pub fn start_clips_resampling(
 ) {
     let empty_buffer_retry_delay = config.empty_buffer_retry_delay;
 
-    let fill_indata = |indata: &mut Vec<f32>, amount| {
+    let fill_indata = |indata: &mut Vec<f32>, amount| -> bool {
         while indata.len() < amount {
+            if !flag.load(Ordering::Relaxed) {
+                return true;
+            }
+
             let mut active_sound_guard = active_sound.lock().unwrap_or_else(|e| e.into_inner());
 
             let active_sound = match active_sound_guard.as_mut() {
@@ -125,6 +135,8 @@ pub fn start_clips_resampling(
                 Clip::NotLoaded { error: _, path: _ } => indata.resize(amount, 0.0),
             };
         }
+
+        false
     };
 
     let push_sample = |sample: f32| -> (bool, f64) {
@@ -134,17 +146,16 @@ pub fn start_clips_resampling(
         )
     };
 
-    start_resampling_loop(config, flag, fill_indata, push_sample);
+    start_resampling_loop(config, fill_indata, push_sample);
 
     println!("Clips resampling thread stopped");
 }
 
 pub fn start_resampling_loop(
     config: ResampleConfig,
-    flag: Arc<AtomicBool>,
-    mut fill_indata: impl FnMut(&mut Vec<f32>, usize) -> (),
+    mut fill_indata: impl FnMut(&mut Vec<f32>, usize) -> bool,
     mut push_sample: impl FnMut(f32) -> (bool, f64),
-) {
+) -> () {
     let mut resampler = Async::<f32>::new_poly(
         config.ratio,
         1.1,
@@ -164,8 +175,10 @@ pub fn start_resampling_loop(
     let indexing = Indexing::new();
 
     thread::sleep(Duration::from_millis(config.start_delay));
-    while flag.load(Ordering::Relaxed) {
-        fill_indata(&mut indata, samples_to_read);
+    loop {
+        if fill_indata(&mut indata, samples_to_read) {
+            return;
+        }
 
         let input_adapter =
             InterleavedSlice::new(&indata, config.input_channels, frames_to_read).unwrap();
