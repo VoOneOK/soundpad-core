@@ -99,7 +99,13 @@ pub fn write_sounds_config(path: &Path, new_config: &SoundsConfig) -> Result<(),
     let new_json = serde_json::to_string_pretty(new_config)
         .map_err(|err| format!("Failed to generate sounds config: {err}"))?;
 
-    fs::write(path, new_json).map_err(|err| format!("Failed to write sounds config: {err}"))?;
+    let temp_path = path.with_added_extension("tmp");
+
+    fs::write(&temp_path, new_json)
+        .map_err(|err| format!("Failed to write tmp sounds config: {err}"))?;
+
+    fs::rename(temp_path, path)
+        .map_err(|err| format!("Failed to apply sounds config write: {err}"))?;
 
     Ok(())
 }
