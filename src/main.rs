@@ -4,17 +4,21 @@ use cpal::{
     traits::{DeviceTrait, StreamTrait},
 };
 use ringbuf::traits::{Consumer, Producer};
-use std::{fmt::Write, sync::Mutex};
 use std::{
+    collections::HashMap,
+    fmt::Write,
     sync::{
-        Arc,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
 };
 use uuid::Uuid;
 
-use crate::resample::ResampleConfig;
+use crate::{
+    resample::ResampleConfig,
+    storage::{Clip, SoundsConfig},
+};
 
 mod devices;
 mod resample;
@@ -24,15 +28,15 @@ mod storage;
 mod ui;
 
 #[derive(Debug)]
-struct SoundpadSettings {
+struct SoundpadContext {
     input_buffer_divider: usize,
     output_buffer_divider: usize,
     clip_buffer_multiplier: usize,
     resampling_chunk_size: usize,
     resampling_start_delay_ms: u64,
     resampling_buffer_fill_retry_delay_ms: u64,
-    max_preload_size_mb: u32,
     storage_paths: storage::StoragePaths,
+    sounds_config: SoundsConfig,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -46,6 +50,9 @@ fn main() {
     const AUTHOR: &str = "vooneok";
     const APP: &str = "open-soundpad-core";
 
+    // later will be read out of saved config anyway
+    let max_preload_size_mb: u32 = 5;
+
     let storage_paths = match storage::storage_paths(QUALIFIER, AUTHOR, APP) {
         Ok(val) => val,
         Err(error) => {
@@ -54,44 +61,49 @@ fn main() {
         }
     };
 
-    let mut soundpad_settings = SoundpadSettings {
+    let mut sounds_config = match storage::read_sounds_config(&storage_paths.config.sounds) {
+        Ok(val) => val,
+        Err(error) => {
+            println!("{}", error);
+            return;
+        }
+    };
+
+    println!("Preloading sounds...");
+
+    let clips = Arc::new(RwLock::new(storage::verify_and_load_sounds(
+        &mut sounds_config.sounds,
+        &storage_paths.data.sounds_dir,
+        (max_preload_size_mb * 1024 * 1024 / 4) as usize,
+    )));
+
+    let host = cpal::default_host();
+
+    let mut soundpad_ctx = SoundpadContext {
         input_buffer_divider: 5,
         output_buffer_divider: 5,
         clip_buffer_multiplier: 2,
         resampling_chunk_size: 2024,
         resampling_start_delay_ms: 100,
         resampling_buffer_fill_retry_delay_ms: 1,
-        max_preload_size_mb: 90,
         storage_paths,
+        sounds_config,
     };
 
-    let host = cpal::default_host();
-
     loop {
-        if run_soundpad(&host, &mut soundpad_settings) {
+        if run_soundpad(&host, &mut soundpad_ctx, &clips) {
             break;
         }
     }
 }
 
-fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
+fn run_soundpad(
+    host: &Host,
+    context: &mut SoundpadContext,
+    clips: &Arc<RwLock<HashMap<Uuid, Clip>>>,
+) -> bool {
     const CLIPS_SAMPLES: f64 = 48000.0;
     const CLIPS_CHANNELS: usize = 2;
-
-    let mut sounds_config = match storage::read_sounds_config(&settings.storage_paths.config.sounds)
-    {
-        Ok(val) => val,
-        Err(error) => {
-            println!("{}", error);
-            return true;
-        }
-    };
-
-    let clips = storage::verify_and_load_sounds(
-        &mut sounds_config.sounds,
-        &settings.storage_paths.data.sounds_dir,
-        (settings.max_preload_size_mb * 1024 * 1024 / 4) as usize,
-    );
 
     let active_sound: Arc<Mutex<Option<ActiveSound>>> = Arc::new(Mutex::new(None));
     let active_sound_clone = Arc::clone(&active_sound);
@@ -102,17 +114,17 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
 
     let (mut input_producer, input_consumer) = ring_buffers::create_ring_buffer::<f32>(
         input_config.sample_rate as usize * input_config.channels as usize
-            / settings.input_buffer_divider,
+            / context.input_buffer_divider,
     );
 
     let (output_producer, mut output_consumer) = ring_buffers::create_ring_buffer::<f32>(
         output_config.sample_rate as usize * output_config.channels as usize
-            / settings.output_buffer_divider,
+            / context.output_buffer_divider,
     );
 
     let clip_buffer_len = output_config.sample_rate as usize
         * output_config.channels as usize
-        * settings.clip_buffer_multiplier;
+        * context.clip_buffer_multiplier;
 
     let (clip_producer, mut clip_consumer) =
         ring_buffers::create_ring_buffer::<f32>(clip_buffer_len);
@@ -158,10 +170,10 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     let mic_resample_config = ResampleConfig {
         input_channels: input_config.channels as usize,
         output_channels: output_config.channels as usize,
-        chunk_size: settings.resampling_chunk_size,
+        chunk_size: context.resampling_chunk_size,
         ratio: mic_resampling_ratio,
-        start_delay: settings.resampling_start_delay_ms,
-        empty_buffer_retry_delay: settings.resampling_buffer_fill_retry_delay_ms,
+        start_delay: context.resampling_start_delay_ms,
+        empty_buffer_retry_delay: context.resampling_buffer_fill_retry_delay_ms,
         unknown_buffer_fullness: 0.0,
     };
 
@@ -177,18 +189,20 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
     let clips_resample_config = ResampleConfig {
         input_channels: 2,
         output_channels: CLIPS_CHANNELS,
-        chunk_size: settings.resampling_chunk_size,
+        chunk_size: context.resampling_chunk_size,
         ratio: output_config.sample_rate as f64 / CLIPS_SAMPLES,
-        start_delay: settings.resampling_start_delay_ms,
-        empty_buffer_retry_delay: settings.resampling_buffer_fill_retry_delay_ms,
+        start_delay: context.resampling_start_delay_ms,
+        empty_buffer_retry_delay: context.resampling_buffer_fill_retry_delay_ms,
         unknown_buffer_fullness: 0.0,
     };
+
+    let clips_clone = Arc::clone(clips);
 
     let clips_resample_thread = thread::spawn(move || {
         resample::start_clips_resampling(
             clips_resample_config,
             clips_flag,
-            &clips,
+            clips_clone,
             active_sound_clone,
             clip_buffer_len,
             clip_producer,
@@ -248,20 +262,20 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
                 if let Err(err) = sounds::upload_sound(
                     &sound_id.to_string(),
                     parts[2],
-                    &settings.storage_paths.data.sounds_dir,
+                    &context.storage_paths.data.sounds_dir,
                 ) {
                     last_output = err;
                     continue;
                 }
 
-                sounds_config.sounds.push(storage::Sound {
+                context.sounds_config.sounds.push(storage::Sound {
                     uuid: sound_id,
                     name: String::from(parts[1]),
                 });
 
                 if let Err(err) = storage::write_sounds_config(
-                    &settings.storage_paths.config.sounds,
-                    &sounds_config,
+                    &context.storage_paths.config.sounds,
+                    &context.sounds_config,
                 ) {
                     last_output = err;
                     continue;
@@ -270,13 +284,13 @@ fn run_soundpad(host: &Host, settings: &mut SoundpadSettings) -> bool {
                 last_output = format!("Uploaded {} ({})", parts[1], sound_id);
             }
             "list" => {
-                if sounds_config.sounds.is_empty() {
+                if context.sounds_config.sounds.is_empty() {
                     last_output = "No sounds uploaded".into();
                     continue;
                 }
 
                 last_output.clear();
-                for sound in &sounds_config.sounds {
+                for sound in &context.sounds_config.sounds {
                     let _ = writeln!(last_output, "{} ({})", sound.name, sound.uuid);
                 }
                 last_output.pop();

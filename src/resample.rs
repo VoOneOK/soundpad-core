@@ -5,7 +5,7 @@ use rubato::{Async, FixedAsync, Indexing, PolynomialDegree, Resampler};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -73,7 +73,7 @@ pub fn start_mic_resampling(
 pub fn start_clips_resampling(
     config: ResampleConfig,
     flag: Arc<AtomicBool>,
-    clips: &HashMap<Uuid, Clip>,
+    clips: Arc<RwLock<HashMap<Uuid, Clip>>>,
     active_sound: Arc<Mutex<Option<ActiveSound>>>,
     clip_buffer_len: usize,
     mut output_producer: OutputProducer,
@@ -95,6 +95,8 @@ pub fn start_clips_resampling(
                     continue;
                 }
             };
+
+            let clips = clips.read().unwrap();
 
             let clip = match clips.get(&active_sound.uuid) {
                 Some(val) => val,
