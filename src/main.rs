@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     fmt::Write,
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -105,8 +105,7 @@ fn run_soundpad(
     const CLIPS_SAMPLES: f64 = 48000.0;
     const CLIPS_CHANNELS: usize = 2;
 
-    let active_sound: Arc<Mutex<Option<ActiveSound>>> = Arc::new(Mutex::new(None));
-    let active_sound_clone = Arc::clone(&active_sound);
+    let active_sound: Arc<RwLock<Option<ActiveSound>>> = Arc::new(RwLock::new(None));
 
     let (input_device, input_config) = devices::get_input_device(&host);
     let (output_device, output_config) =
@@ -162,11 +161,9 @@ fn run_soundpad(
     output_stream.play().expect("Output stream failed to start");
 
     let keep_resampling = Arc::new(AtomicBool::new(true));
+
     let mic_flag = keep_resampling.clone();
-    let clips_flag = keep_resampling.clone();
-
     let mic_resampling_ratio = output_config.sample_rate as f64 / input_config.sample_rate as f64;
-
     let mic_resample_config = ResampleConfig {
         input_channels: input_config.channels as usize,
         output_channels: output_config.channels as usize,
@@ -186,6 +183,9 @@ fn run_soundpad(
         );
     });
 
+    let clips_flag = keep_resampling.clone();
+    let clips_clone = Arc::clone(clips);
+    let active_sound_clone = Arc::clone(&active_sound);
     let clips_resample_config = ResampleConfig {
         input_channels: 2,
         output_channels: CLIPS_CHANNELS,
@@ -195,8 +195,6 @@ fn run_soundpad(
         empty_buffer_retry_delay: context.resampling_buffer_fill_retry_delay_ms,
         unknown_buffer_fullness: 0.0,
     };
-
-    let clips_clone = Arc::clone(clips);
 
     let clips_resample_thread = thread::spawn(move || {
         resample::start_clips_resampling(
@@ -304,10 +302,9 @@ fn run_soundpad(
 
                 match Uuid::parse_str(parts[1]) {
                     Ok(sound_id) => {
-                        let mut active_sound_guard =
-                            active_sound.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut active_sound_writable = active_sound.write().unwrap();
 
-                        *active_sound_guard = Some(ActiveSound {
+                        *active_sound_writable = Some(ActiveSound {
                             uuid: sound_id,
                             position: 0,
                         });

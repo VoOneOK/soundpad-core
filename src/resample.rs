@@ -5,7 +5,7 @@ use rubato::{Async, FixedAsync, Indexing, PolynomialDegree, Resampler};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -74,7 +74,7 @@ pub fn start_clips_resampling(
     config: ResampleConfig,
     flag: Arc<AtomicBool>,
     clips: Arc<RwLock<HashMap<Uuid, Clip>>>,
-    active_sound: Arc<Mutex<Option<ActiveSound>>>,
+    active_sound: Arc<RwLock<Option<ActiveSound>>>,
     clip_buffer_len: usize,
     mut output_producer: OutputProducer,
 ) {
@@ -86,19 +86,23 @@ pub fn start_clips_resampling(
                 return true;
             }
 
-            let mut active_sound_guard = active_sound.lock().unwrap_or_else(|e| e.into_inner());
+            let (uuid, start_position) = {
+                let active_sound_readable = active_sound.read().unwrap();
 
-            let active_sound = match active_sound_guard.as_mut() {
-                Some(val) => val,
-                _ => {
-                    thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
-                    continue;
-                }
+                let active_sound_readable = match active_sound_readable.as_ref() {
+                    Some(val) => val,
+                    _ => {
+                        thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
+                        continue;
+                    }
+                };
+
+                (active_sound_readable.uuid, active_sound_readable.position)
             };
 
-            let clips = clips.read().unwrap();
+            let clips_readable = clips.read().unwrap();
 
-            let clip = match clips.get(&active_sound.uuid) {
+            let clip = match clips_readable.get(&uuid) {
                 Some(val) => val,
                 _ => {
                     thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
@@ -108,18 +112,18 @@ pub fn start_clips_resampling(
 
             match clip {
                 Clip::Preloaded(samples) => {
-                    let start_position = active_sound.position;
-
                     let samples_to_push = amount.min(samples.len() - start_position);
 
                     for i in 0..samples_to_push {
                         indata.push(samples[start_position + i]);
                     }
 
+                    let mut active_sound_writable = active_sound.write().unwrap();
+
                     if samples.len() == start_position + samples_to_push {
-                        *active_sound_guard = None;
+                        *active_sound_writable = None;
                     } else {
-                        active_sound.position += samples_to_push;
+                        active_sound_writable.as_mut().unwrap().position += samples_to_push;
                     }
 
                     if indata.len() < amount {
