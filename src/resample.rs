@@ -13,7 +13,11 @@ use std::{
 };
 use uuid::Uuid;
 
-use crate::{ActiveSound, storage::Clip};
+use crate::{
+    ActiveSound,
+    ring_buffers::{RBConsumer, RBProducer},
+    storage::Clip,
+};
 
 #[derive(Debug)]
 pub struct ResampleConfig {
@@ -26,22 +30,11 @@ pub struct ResampleConfig {
     pub unknown_buffer_fullness: f64,
 }
 
-type InputConsumer = ringbuf::wrap::caching::Caching<
-    Arc<ringbuf::SharedRb<ringbuf::storage::Heap<f32>>>,
-    false,
-    true,
->;
-type OutputProducer = ringbuf::wrap::caching::Caching<
-    Arc<ringbuf::SharedRb<ringbuf::storage::Heap<f32>>>,
-    true,
-    false,
->;
-
 pub fn start_mic_resampling(
     config: ResampleConfig,
     flag: Arc<AtomicBool>,
-    mut input_consumer: InputConsumer,
-    mut output_producer: OutputProducer,
+    mut input_consumer: RBConsumer<f32>,
+    mut output_producer: RBProducer<f32>,
 ) {
     let empty_buffer_retry_delay = config.empty_buffer_retry_delay;
 
@@ -76,7 +69,7 @@ pub fn start_clips_resampling(
     clips: Arc<RwLock<HashMap<Uuid, Clip>>>,
     active_sound: Arc<RwLock<Option<ActiveSound>>>,
     clip_buffer_len: usize,
-    mut output_producer: OutputProducer,
+    mut output_producer: RBProducer<f32>,
 ) {
     let empty_buffer_retry_delay = config.empty_buffer_retry_delay;
 
