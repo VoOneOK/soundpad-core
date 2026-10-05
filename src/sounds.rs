@@ -1,6 +1,12 @@
 use std::{path::Path, path::PathBuf, process::Command};
 
-pub fn upload_sound(id: &str, file_path_str: &str, target_dir: &Path) -> Result<(), String> {
+pub fn upload_sound(
+    id: &str,
+    file_path_str: &str,
+    target_dir: &Path,
+    save_rate: u32,
+    save_channels: u32,
+) -> Result<(), String> {
     let file_path = PathBuf::from(file_path_str);
     let file_exist = file_path.try_exists().unwrap_or(false);
 
@@ -17,9 +23,9 @@ pub fn upload_sound(id: &str, file_path_str: &str, target_dir: &Path) -> Result<
             "-i",
             &file_path_str,
             "-ar",
-            "48000",
+            &save_rate.to_string(),
             "-ac",
-            "2",
+            &save_channels.to_string(),
             "-c:a",
             "pcm_f32le",
             target_path.to_str().unwrap(),

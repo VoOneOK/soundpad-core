@@ -35,6 +35,8 @@ struct SoundpadContext {
     resampling_chunk_size: usize,
     resampling_start_delay_ms: u64,
     resampling_buffer_fill_retry_delay_ms: u64,
+    sounds_saved_rate: u32,
+    sounds_saved_channels: u32,
     storage_paths: storage::StoragePaths,
     sounds_config: SoundsConfig,
 }
@@ -52,6 +54,8 @@ fn main() {
 
     // later will be read out of saved config anyway
     let max_preload_size_mb: u32 = 5;
+    let sounds_saved_rate: u32 = 48000;
+    let sounds_saved_channels: u32 = 2;
 
     let storage_paths = match storage::storage_paths(QUALIFIER, AUTHOR, APP) {
         Ok(val) => val,
@@ -86,6 +90,8 @@ fn main() {
         resampling_chunk_size: 2024,
         resampling_start_delay_ms: 100,
         resampling_buffer_fill_retry_delay_ms: 1,
+        sounds_saved_rate,
+        sounds_saved_channels,
         storage_paths,
         sounds_config,
     };
@@ -261,6 +267,8 @@ fn run_soundpad(
                     &sound_id.to_string(),
                     parts[2],
                     &context.storage_paths.data.sounds_dir,
+                    context.sounds_saved_rate,
+                    context.sounds_saved_channels,
                 ) {
                     last_output = err;
                     continue;
