@@ -17,12 +17,14 @@ use uuid::Uuid;
 
 use crate::{
     resample::ResampleConfig,
+    sound_load::SoundLoadingConfig,
     storage::{Clip, SoundsConfig},
 };
 
 mod devices;
 mod resample;
 mod ring_buffers;
+mod sound_load;
 mod sounds;
 mod storage;
 mod ui;
@@ -34,7 +36,8 @@ struct SoundpadContext {
     clip_buffer_multiplier: usize,
     resampling_chunk_size: usize,
     resampling_start_delay_ms: u64,
-    resampling_buffer_fill_retry_delay_ms: u64,
+    mic_empty_buffer_retry_delay_ms: u64,
+    clips_empty_buffer_retry_delay_ms: u64,
     sounds_saved_rate: u32,
     sounds_saved_channels: u32,
     storage_paths: storage::StoragePaths,
@@ -53,7 +56,7 @@ fn main() {
     const APP: &str = "open-soundpad-core";
 
     // later will be read out of saved config anyway
-    let max_preload_size_mb: u32 = 5;
+    let max_preload_size_mb: u32 = 2;
     let sounds_saved_rate: u32 = 48000;
     let sounds_saved_channels: u32 = 2;
 
@@ -89,7 +92,8 @@ fn main() {
         clip_buffer_multiplier: 2,
         resampling_chunk_size: 2024,
         resampling_start_delay_ms: 100,
-        resampling_buffer_fill_retry_delay_ms: 1,
+        mic_empty_buffer_retry_delay_ms: 1,
+        clips_empty_buffer_retry_delay_ms: 300,
         sounds_saved_rate,
         sounds_saved_channels,
         storage_paths,
@@ -134,6 +138,9 @@ fn run_soundpad(
     let (clip_producer, mut clip_consumer) =
         ring_buffers::create_ring_buffer::<f32>(clip_buffer_len);
 
+    let (loaded_clip_producer, loaded_clip_consumer) =
+        ring_buffers::create_ring_buffer::<f32>(clip_buffer_len);
+
     let input_stream = input_device
         .build_input_stream(
             input_config,
@@ -176,7 +183,7 @@ fn run_soundpad(
         chunk_size: context.resampling_chunk_size,
         ratio: mic_resampling_ratio,
         start_delay: context.resampling_start_delay_ms,
-        empty_buffer_retry_delay: context.resampling_buffer_fill_retry_delay_ms,
+        empty_buffer_retry_delay: context.mic_empty_buffer_retry_delay_ms,
         unknown_buffer_fullness: 0.0,
     };
 
@@ -198,7 +205,7 @@ fn run_soundpad(
         chunk_size: context.resampling_chunk_size,
         ratio: output_config.sample_rate as f64 / CLIPS_SAMPLES,
         start_delay: context.resampling_start_delay_ms,
-        empty_buffer_retry_delay: context.resampling_buffer_fill_retry_delay_ms,
+        empty_buffer_retry_delay: context.clips_empty_buffer_retry_delay_ms,
         unknown_buffer_fullness: 0.0,
     };
 
@@ -209,7 +216,31 @@ fn run_soundpad(
             clips_clone,
             active_sound_clone,
             clip_buffer_len,
+            loaded_clip_consumer,
             clip_producer,
+        );
+    });
+
+    let clip_generation = Arc::new(AtomicBool::new(true));
+
+    let sound_loading_flag = keep_resampling.clone();
+    let clip_generation_flag = Arc::clone(&clip_generation);
+    let clips_clone = Arc::clone(clips);
+    let active_sound_clone = Arc::clone(&active_sound);
+    let sound_loading_config = SoundLoadingConfig {
+        empty_buffer_retry_delay: context.clips_empty_buffer_retry_delay_ms,
+        next_read_delay: 1,
+        sounds_saved_channels: context.sounds_saved_channels,
+    };
+
+    let sound_loading_thread = thread::spawn(move || {
+        sound_load::start_sound_loading(
+            sound_loading_config,
+            sound_loading_flag,
+            clip_generation_flag,
+            clips_clone,
+            active_sound_clone,
+            loaded_clip_producer,
         );
     });
 
@@ -317,6 +348,8 @@ fn run_soundpad(
                             position: 0,
                         });
 
+                        clip_generation.store(false, Ordering::Relaxed);
+
                         last_output = "Playing...".into();
                     }
                     Err(_err) => {
@@ -333,6 +366,7 @@ fn run_soundpad(
     keep_resampling.store(false, Ordering::Relaxed);
     let _ = mic_resample_thread.join();
     let _ = clips_resample_thread.join();
+    let _ = sound_loading_thread.join();
 
     is_exiting
 }

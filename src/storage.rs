@@ -38,7 +38,7 @@ pub enum Clip {
     Partial {
         head: Vec<f32>,
         path: PathBuf,
-        samples_read: usize,
+        full_amount: usize,
     },
     NotLoaded {
         error: String,
@@ -142,15 +142,13 @@ pub fn verify_and_load_sounds(
             }
         };
 
-        let samples_read = samples.len();
-
         preloaded.insert(
             sound.uuid.clone(),
-            if samples_read >= max_samples {
+            if samples.len() >= max_samples {
                 Clip::Partial {
                     head: samples,
                     path: sound_path,
-                    samples_read,
+                    full_amount: reader.len() as usize,
                 }
             } else {
                 Clip::Preloaded(samples)
