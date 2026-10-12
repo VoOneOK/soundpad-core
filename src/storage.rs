@@ -5,12 +5,14 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct ConfigPaths {
+    #[expect(dead_code, reason = "kept for future")]
     pub root_dir: PathBuf,
     pub sounds: PathBuf,
 }
 
 #[derive(Debug)]
 pub struct DataPaths {
+    #[expect(dead_code, reason = "kept for future")]
     pub root_dir: PathBuf,
     pub sounds_dir: PathBuf,
 }
@@ -41,7 +43,9 @@ pub enum Clip {
         full_amount: usize,
     },
     NotLoaded {
+        #[expect(dead_code, reason = "kept for future")]
         error: String,
+        #[expect(dead_code, reason = "kept for future")]
         path: PathBuf,
     },
 }
