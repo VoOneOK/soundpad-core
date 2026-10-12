@@ -66,6 +66,7 @@ pub fn start_mic_resampling(
 pub fn start_clips_resampling(
     config: ResampleConfig,
     flag: Arc<AtomicBool>,
+    generation_flag: Arc<AtomicBool>,
     clips: Arc<RwLock<HashMap<Uuid, Clip>>>,
     active_sound: Arc<RwLock<Option<ActiveSound>>>,
     clip_buffer_len: usize,
@@ -78,6 +79,12 @@ pub fn start_clips_resampling(
         while indata.len() < amount {
             if !flag.load(Ordering::Relaxed) {
                 return true;
+            }
+
+            if !generation_flag.load(Ordering::Relaxed) {
+                indata.clear();
+                loaded_clip_consumer.clear();
+                generation_flag.store(true, Ordering::Relaxed);
             }
 
             let (uuid, start_position) = {
@@ -148,6 +155,9 @@ pub fn start_clips_resampling(
                                 _ => {
                                     if !flag.load(Ordering::Relaxed) {
                                         return true;
+                                    }
+                                    if !generation_flag.load(Ordering::Relaxed) {
+                                        continue;
                                     }
                                     thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
                                 }

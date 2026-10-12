@@ -17,18 +17,18 @@ pub struct SoundLoadingConfig {
     pub empty_buffer_retry_delay: u64,
     pub next_read_delay: u64,
     pub sounds_saved_channels: u32,
+    pub generational_clear_waiting: u64,
 }
 
 pub fn start_sound_loading(
     config: SoundLoadingConfig,
     flag: Arc<AtomicBool>,
     generation_flag: Arc<AtomicBool>,
+    resampling_generation_flag: Arc<AtomicBool>,
     clips: Arc<RwLock<HashMap<Uuid, Clip>>>,
     active_sound: Arc<RwLock<Option<ActiveSound>>>,
     mut loaded_clip_producer: RBProducer<f32>,
 ) {
-    let mut allow_override = false;
-
     'outer: while flag.load(Ordering::Relaxed) {
         let sound_id = {
             let active_sound_readable = active_sound.read().unwrap();
@@ -70,16 +70,16 @@ pub fn start_sound_loading(
             }
 
             if !generation_flag.load(Ordering::Relaxed) {
-                allow_override = true;
+                resampling_generation_flag.store(false, Ordering::Relaxed);
+
+                while !resampling_generation_flag.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_micros(config.generational_clear_waiting));
+                }
+
                 continue 'outer;
             }
 
-            let max_samples = if allow_override {
-                allow_override = false;
-                loaded_clip_producer.vacant_len() + loaded_clip_producer.occupied_len()
-            } else {
-                loaded_clip_producer.vacant_len()
-            };
+            let max_samples = loaded_clip_producer.vacant_len();
 
             if max_samples == 0 {
                 thread::sleep(Duration::from_secs(config.next_read_delay / 2));

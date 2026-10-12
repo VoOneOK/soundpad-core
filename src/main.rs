@@ -196,7 +196,11 @@ fn run_soundpad(
         );
     });
 
+    let clip_loading_generation = Arc::new(AtomicBool::new(true));
+    let clip_resampling_generation = Arc::new(AtomicBool::new(true));
+
     let clips_flag = keep_resampling.clone();
+    let clips_resampling_generation_flag = Arc::clone(&clip_resampling_generation);
     let clips_clone = Arc::clone(clips);
     let active_sound_clone = Arc::clone(&active_sound);
     let clips_resample_config = ResampleConfig {
@@ -213,6 +217,7 @@ fn run_soundpad(
         resample::start_clips_resampling(
             clips_resample_config,
             clips_flag,
+            clips_resampling_generation_flag,
             clips_clone,
             active_sound_clone,
             clip_buffer_len,
@@ -221,23 +226,23 @@ fn run_soundpad(
         );
     });
 
-    let clip_generation = Arc::new(AtomicBool::new(true));
-
     let sound_loading_flag = keep_resampling.clone();
-    let clip_generation_flag = Arc::clone(&clip_generation);
+    let clip_loading_generation_flag = Arc::clone(&clip_loading_generation);
     let clips_clone = Arc::clone(clips);
     let active_sound_clone = Arc::clone(&active_sound);
     let sound_loading_config = SoundLoadingConfig {
         empty_buffer_retry_delay: context.clips_empty_buffer_retry_delay_ms,
         next_read_delay: 1,
         sounds_saved_channels: context.sounds_saved_channels,
+        generational_clear_waiting: 20,
     };
 
     let sound_loading_thread = thread::spawn(move || {
         sound_load::start_sound_loading(
             sound_loading_config,
             sound_loading_flag,
-            clip_generation_flag,
+            clip_loading_generation_flag,
+            clip_resampling_generation,
             clips_clone,
             active_sound_clone,
             loaded_clip_producer,
@@ -348,7 +353,7 @@ fn run_soundpad(
                             position: 0,
                         });
 
-                        clip_generation.store(false, Ordering::Relaxed);
+                        clip_loading_generation.store(false, Ordering::Relaxed);
 
                         last_output = "Playing...".into();
                     }
