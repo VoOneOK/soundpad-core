@@ -12,11 +12,16 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
+    time::Duration,
 };
 use uuid::Uuid;
 
 use crate::{
     resample::{ClipsResampler, MicResampler, ResampleConfig},
+    settings::{
+        BuffersSettings, ClipsResamplerSettings, MicResamplerSettings, SoundLoaderSettings,
+        StorageSettings,
+    },
     sound_load::{SoundLoader, SoundLoadingConfig},
     storage::{Clip, SoundsConfig},
 };
@@ -24,6 +29,7 @@ use crate::{
 mod devices;
 mod resample;
 mod ring_buffers;
+mod settings;
 mod sound_load;
 mod sounds;
 mod storage;
@@ -31,15 +37,11 @@ mod ui;
 
 #[derive(Debug)]
 struct SoundpadContext {
-    input_buffer_divider: usize,
-    output_buffer_divider: usize,
-    clip_buffer_multiplier: usize,
-    resampling_chunk_size: usize,
-    resampling_start_delay_ms: u64,
-    mic_empty_buffer_retry_delay_ms: u64,
-    clips_empty_buffer_retry_delay_ms: u64,
-    sounds_saved_rate: u32,
-    sounds_saved_channels: u32,
+    buffers: BuffersSettings,
+    mic_resampler: MicResamplerSettings,
+    clips_resampler: ClipsResamplerSettings,
+    sound_loader: SoundLoaderSettings,
+    storage_settings: StorageSettings,
     storage_paths: storage::StoragePaths,
     sounds_config: SoundsConfig,
 }
@@ -57,8 +59,6 @@ fn main() {
 
     // later will be read out of saved config anyway
     let max_preload_size_mb: u32 = 2;
-    let sounds_saved_rate: u32 = 48000;
-    let sounds_saved_channels: u32 = 2;
 
     let storage_paths = match storage::storage_paths(QUALIFIER, AUTHOR, APP) {
         Ok(val) => val,
@@ -87,15 +87,31 @@ fn main() {
     let host = cpal::default_host();
 
     let mut soundpad_ctx = SoundpadContext {
-        input_buffer_divider: 5,
-        output_buffer_divider: 5,
-        clip_buffer_multiplier: 2,
-        resampling_chunk_size: 2024,
-        resampling_start_delay_ms: 100,
-        mic_empty_buffer_retry_delay_ms: 1,
-        clips_empty_buffer_retry_delay_ms: 300,
-        sounds_saved_rate,
-        sounds_saved_channels,
+        buffers: BuffersSettings {
+            input_sec: 0.2,
+            output_sec: 0.2,
+            clips_sec: 2.0,
+        },
+        mic_resampler: MicResamplerSettings {
+            chunk_size: 2024,
+            start_delay_ms: 100,
+            input_poll_ms: 1,
+        },
+        clips_resampler: ClipsResamplerSettings {
+            chunk_size: 2024,
+            unknown_buffer_fullness: 0.0,
+            start_delay_ms: 100,
+            clip_poll_ms: 200,
+        },
+        sound_loader: SoundLoaderSettings {
+            clip_poll_ms: 200,
+            read_poll_ms: 150,
+            clear_poll_us: 20,
+        },
+        storage_settings: StorageSettings {
+            sounds_channels: 2,
+            sounds_rate: 48000,
+        },
         storage_paths,
         sounds_config,
     };
@@ -122,24 +138,24 @@ fn run_soundpad(
         devices::get_output_device(&host, input_config.sample_rate);
 
     let (mut input_producer, input_consumer) = ring_buffers::create_ring_buffer::<f32>(
-        input_config.sample_rate as usize * input_config.channels as usize
-            / context.input_buffer_divider,
+        (input_config.sample_rate as f64 * input_config.channels as f64 / context.buffers.input_sec)
+            as usize,
     );
 
     let (output_producer, mut output_consumer) = ring_buffers::create_ring_buffer::<f32>(
-        output_config.sample_rate as usize * output_config.channels as usize
-            / context.output_buffer_divider,
+        (output_config.sample_rate as f64 * output_config.channels as f64
+            / context.buffers.output_sec) as usize,
     );
 
-    let clip_buffer_len = output_config.sample_rate as usize
-        * output_config.channels as usize
-        * context.clip_buffer_multiplier;
+    let clips_buffer_len = (output_config.sample_rate as f64
+        * output_config.channels as f64
+        * context.buffers.clips_sec) as usize;
 
-    let (clip_producer, mut clip_consumer) =
-        ring_buffers::create_ring_buffer::<f32>(clip_buffer_len);
+    let (clips_producer, mut clips_consumer) =
+        ring_buffers::create_ring_buffer::<f32>(clips_buffer_len);
 
-    let (loaded_clip_producer, loaded_clip_consumer) =
-        ring_buffers::create_ring_buffer::<f32>(clip_buffer_len);
+    let (loaded_clips_producer, loaded_clips_consumer) =
+        ring_buffers::create_ring_buffer::<f32>(clips_buffer_len);
 
     let input_stream = input_device
         .build_input_stream(
@@ -160,7 +176,7 @@ fn run_soundpad(
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 for sample in data {
                     let mic_sample = output_consumer.try_pop().unwrap_or(0.0);
-                    let clip_sample = clip_consumer.try_pop().unwrap_or(0.0);
+                    let clip_sample = clips_consumer.try_pop().unwrap_or(0.0);
 
                     *sample = (mic_sample + clip_sample).clamp(-1.0, 1.0);
                 }
@@ -180,11 +196,11 @@ fn run_soundpad(
     let mic_resample_config = ResampleConfig {
         input_channels: input_config.channels as usize,
         output_channels: output_config.channels as usize,
-        chunk_size: context.resampling_chunk_size,
+        chunk_size: context.mic_resampler.chunk_size,
         ratio: mic_resampling_ratio,
-        start_delay: context.resampling_start_delay_ms,
-        empty_buffer_retry_delay: context.mic_empty_buffer_retry_delay_ms,
         unknown_buffer_fullness: 0.0,
+        start_delay: Duration::from_millis(context.mic_resampler.start_delay_ms),
+        empty_buffer_retry_delay: Duration::from_millis(context.mic_resampler.input_poll_ms),
     };
 
     let mic_resample_thread = thread::spawn(move || {
@@ -208,11 +224,11 @@ fn run_soundpad(
     let clips_resample_config = ResampleConfig {
         input_channels: 2,
         output_channels: CLIPS_CHANNELS,
-        chunk_size: context.resampling_chunk_size,
+        chunk_size: context.clips_resampler.chunk_size,
         ratio: output_config.sample_rate as f64 / CLIPS_SAMPLES,
-        start_delay: context.resampling_start_delay_ms,
-        empty_buffer_retry_delay: context.clips_empty_buffer_retry_delay_ms,
-        unknown_buffer_fullness: 0.0,
+        unknown_buffer_fullness: context.clips_resampler.unknown_buffer_fullness,
+        start_delay: Duration::from_millis(context.clips_resampler.start_delay_ms),
+        empty_buffer_retry_delay: Duration::from_millis(context.clips_resampler.clip_poll_ms),
     };
 
     let clips_resample_thread = thread::spawn(move || {
@@ -222,9 +238,9 @@ fn run_soundpad(
             generation_flag: clips_resampling_generation_flag,
             clips: clips_clone,
             active_sound: active_sound_clone,
-            clip_buffer_len,
-            loaded_clip_consumer,
-            output_producer: clip_producer,
+            clip_buffer_len: clips_buffer_len,
+            loaded_clip_consumer: loaded_clips_consumer,
+            output_producer: clips_producer,
         };
 
         clips_resampler.run();
@@ -235,10 +251,10 @@ fn run_soundpad(
     let clips_clone = Arc::clone(clips);
     let active_sound_clone = Arc::clone(&active_sound);
     let sound_loading_config = SoundLoadingConfig {
-        empty_buffer_retry_delay: context.clips_empty_buffer_retry_delay_ms,
-        next_read_delay: 1,
-        sounds_saved_channels: context.sounds_saved_channels,
-        generational_clear_waiting: 20,
+        sounds_saved_channels: context.storage_settings.sounds_channels,
+        empty_buffer_retry_delay: Duration::from_millis(context.sound_loader.clip_poll_ms),
+        next_read_delay: Duration::from_millis(context.sound_loader.read_poll_ms),
+        generational_clear_waiting: Duration::from_micros(context.sound_loader.clear_poll_us),
     };
 
     let sound_loading_thread = thread::spawn(move || {
@@ -249,7 +265,7 @@ fn run_soundpad(
             resampling_generation_flag: clip_resampling_generation,
             clips: clips_clone,
             active_sound: active_sound_clone,
-            loaded_clip_producer: loaded_clip_producer,
+            loaded_clip_producer: loaded_clips_producer,
         };
 
         sound_loader.run();
@@ -309,8 +325,8 @@ fn run_soundpad(
                     &sound_id.to_string(),
                     parts[2],
                     &context.storage_paths.data.sounds_dir,
-                    context.sounds_saved_rate,
-                    context.sounds_saved_channels,
+                    context.storage_settings.sounds_rate,
+                    context.storage_settings.sounds_channels,
                 ) {
                     last_output = err;
                     continue;

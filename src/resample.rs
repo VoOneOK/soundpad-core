@@ -25,9 +25,9 @@ pub struct ResampleConfig {
     pub output_channels: usize,
     pub chunk_size: usize,
     pub ratio: f64,
-    pub start_delay: u64,
-    pub empty_buffer_retry_delay: u64,
     pub unknown_buffer_fullness: f64,
+    pub start_delay: Duration,
+    pub empty_buffer_retry_delay: Duration,
 }
 
 pub struct MicResampler {
@@ -50,7 +50,7 @@ impl MicResampler {
                 match self.input_consumer.try_pop() {
                     Some(sample) => indata.push(sample),
                     None => {
-                        thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
+                        thread::sleep(empty_buffer_retry_delay);
                     }
                 }
             }
@@ -101,7 +101,7 @@ impl ClipsResampler {
                         Some(val) => val,
                         _ => {
                             drop(active_sound_readable);
-                            thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
+                            thread::sleep(empty_buffer_retry_delay);
                             continue;
                         }
                     };
@@ -117,7 +117,7 @@ impl ClipsResampler {
                         drop(clips_readable);
                         let mut active_sound_writable = self.active_sound.write().unwrap();
                         *active_sound_writable = None;
-                        thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
+                        thread::sleep(empty_buffer_retry_delay);
                         continue;
                     }
                 };
@@ -166,9 +166,7 @@ impl ClipsResampler {
                                         if !self.generation_flag.load(Ordering::Relaxed) {
                                             continue 'outer;
                                         }
-                                        thread::sleep(Duration::from_millis(
-                                            empty_buffer_retry_delay,
-                                        ));
+                                        thread::sleep(empty_buffer_retry_delay);
                                     }
                                 };
                             }
@@ -239,7 +237,7 @@ pub fn start_resampling_loop(
 
     let indexing = Indexing::new();
 
-    thread::sleep(Duration::from_millis(config.start_delay));
+    thread::sleep(config.start_delay);
     loop {
         if fill_indata(&mut indata, samples_to_read) {
             return;

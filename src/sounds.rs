@@ -4,7 +4,7 @@ pub fn upload_sound(
     id: &str,
     file_path_str: &str,
     target_dir: &Path,
-    save_rate: u32,
+    save_rate: u64,
     save_channels: u32,
 ) -> Result<(), String> {
     let file_path = PathBuf::from(file_path_str);

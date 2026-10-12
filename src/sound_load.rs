@@ -14,10 +14,10 @@ use crate::{ActiveSound, ring_buffers::RBProducer, storage::Clip};
 
 #[derive(Debug)]
 pub struct SoundLoadingConfig {
-    pub empty_buffer_retry_delay: u64,
-    pub next_read_delay: u64,
     pub sounds_saved_channels: u32,
-    pub generational_clear_waiting: u64,
+    pub empty_buffer_retry_delay: Duration,
+    pub next_read_delay: Duration,
+    pub generational_clear_waiting: Duration,
 }
 
 pub struct SoundLoader {
@@ -40,7 +40,7 @@ impl SoundLoader {
                     Some(val) => val.uuid,
                     _ => {
                         drop(active_sound_readable);
-                        thread::sleep(Duration::from_millis(self.config.empty_buffer_retry_delay));
+                        thread::sleep(self.config.empty_buffer_retry_delay);
                         continue;
                     }
                 }
@@ -56,7 +56,7 @@ impl SoundLoader {
                 }) => (path, head.len()),
                 _ => {
                     drop(clips_guard);
-                    thread::sleep(Duration::from_millis(self.config.empty_buffer_retry_delay));
+                    thread::sleep(self.config.empty_buffer_retry_delay);
                     continue;
                 }
             };
@@ -77,9 +77,7 @@ impl SoundLoader {
                         .store(false, Ordering::Relaxed);
 
                     while !self.resampling_generation_flag.load(Ordering::Relaxed) {
-                        thread::sleep(Duration::from_micros(
-                            self.config.generational_clear_waiting,
-                        ));
+                        thread::sleep(self.config.generational_clear_waiting);
                     }
 
                     continue 'outer;
@@ -88,7 +86,6 @@ impl SoundLoader {
                 let max_samples = self.loaded_clip_producer.vacant_len();
 
                 if max_samples == 0 {
-                    thread::sleep(Duration::from_secs(self.config.next_read_delay / 2));
                     continue;
                 }
 
@@ -108,7 +105,7 @@ impl SoundLoader {
                     let _ = self.loaded_clip_producer.try_push(sample);
                 }
 
-                thread::sleep(Duration::from_secs(self.config.next_read_delay));
+                thread::sleep(self.config.next_read_delay);
             }
         }
 
