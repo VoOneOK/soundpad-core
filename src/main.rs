@@ -16,8 +16,8 @@ use std::{
 use uuid::Uuid;
 
 use crate::{
-    resample::ResampleConfig,
-    sound_load::SoundLoadingConfig,
+    resample::{ClipsResampler, MicResampler, ResampleConfig},
+    sound_load::{SoundLoader, SoundLoadingConfig},
     storage::{Clip, SoundsConfig},
 };
 
@@ -188,12 +188,14 @@ fn run_soundpad(
     };
 
     let mic_resample_thread = thread::spawn(move || {
-        resample::start_mic_resampling(
-            mic_resample_config,
-            mic_flag,
+        let mic_resampler = MicResampler {
+            config: mic_resample_config,
+            flag: mic_flag,
             input_consumer,
             output_producer,
-        );
+        };
+
+        mic_resampler.run();
     });
 
     let clip_loading_generation = Arc::new(AtomicBool::new(true));
@@ -214,16 +216,18 @@ fn run_soundpad(
     };
 
     let clips_resample_thread = thread::spawn(move || {
-        resample::start_clips_resampling(
-            clips_resample_config,
-            clips_flag,
-            clips_resampling_generation_flag,
-            clips_clone,
-            active_sound_clone,
+        let clips_resampler = ClipsResampler {
+            config: clips_resample_config,
+            flag: clips_flag,
+            generation_flag: clips_resampling_generation_flag,
+            clips: clips_clone,
+            active_sound: active_sound_clone,
             clip_buffer_len,
             loaded_clip_consumer,
-            clip_producer,
-        );
+            output_producer: clip_producer,
+        };
+
+        clips_resampler.run();
     });
 
     let sound_loading_flag = keep_resampling.clone();
@@ -238,15 +242,17 @@ fn run_soundpad(
     };
 
     let sound_loading_thread = thread::spawn(move || {
-        sound_load::start_sound_loading(
-            sound_loading_config,
-            sound_loading_flag,
-            clip_loading_generation_flag,
-            clip_resampling_generation,
-            clips_clone,
-            active_sound_clone,
-            loaded_clip_producer,
-        );
+        let sound_loader = SoundLoader {
+            config: sound_loading_config,
+            flag: sound_loading_flag,
+            generation_flag: clip_loading_generation_flag,
+            resampling_generation_flag: clip_resampling_generation,
+            clips: clips_clone,
+            active_sound: active_sound_clone,
+            loaded_clip_producer: loaded_clip_producer,
+        };
+
+        sound_loader.run();
     });
 
     let input_name = input_device.description().unwrap().name().to_string();

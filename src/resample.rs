@@ -30,180 +30,190 @@ pub struct ResampleConfig {
     pub unknown_buffer_fullness: f64,
 }
 
-pub fn start_mic_resampling(
-    config: ResampleConfig,
-    flag: Arc<AtomicBool>,
-    mut input_consumer: RBConsumer<f32>,
-    mut output_producer: RBProducer<f32>,
-) {
-    let empty_buffer_retry_delay = config.empty_buffer_retry_delay;
-
-    let fill_indata = |indata: &mut Vec<f32>, amount| -> bool {
-        if !flag.load(Ordering::Relaxed) {
-            return true;
-        }
-
-        while indata.len() < amount {
-            match input_consumer.try_pop() {
-                Some(sample) => indata.push(sample),
-                None => {
-                    thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
-                }
-            }
-        }
-
-        false
-    };
-
-    let push_sample =
-        |sample: f32| -> (bool, f64) { (output_producer.try_push(sample).is_ok(), 0.0) };
-
-    start_resampling_loop(config, fill_indata, push_sample);
-
-    println!("Mic resampling thread stopped");
+pub struct MicResampler {
+    pub config: ResampleConfig,
+    pub flag: Arc<AtomicBool>,
+    pub input_consumer: RBConsumer<f32>,
+    pub output_producer: RBProducer<f32>,
 }
 
-pub fn start_clips_resampling(
-    config: ResampleConfig,
-    flag: Arc<AtomicBool>,
-    generation_flag: Arc<AtomicBool>,
-    clips: Arc<RwLock<HashMap<Uuid, Clip>>>,
-    active_sound: Arc<RwLock<Option<ActiveSound>>>,
-    clip_buffer_len: usize,
-    mut loaded_clip_consumer: RBConsumer<f32>,
-    mut output_producer: RBProducer<f32>,
-) {
-    let empty_buffer_retry_delay = config.empty_buffer_retry_delay;
+impl MicResampler {
+    pub fn run(mut self) {
+        let empty_buffer_retry_delay = self.config.empty_buffer_retry_delay;
 
-    let fill_indata = |indata: &mut Vec<f32>, amount: usize| -> bool {
-        while indata.len() < amount {
-            if !flag.load(Ordering::Relaxed) {
+        let fill_indata = |indata: &mut Vec<f32>, amount| -> bool {
+            if !self.flag.load(Ordering::Relaxed) {
                 return true;
             }
 
-            if !generation_flag.load(Ordering::Relaxed) {
-                indata.clear();
-                loaded_clip_consumer.clear();
-                generation_flag.store(true, Ordering::Relaxed);
+            while indata.len() < amount {
+                match self.input_consumer.try_pop() {
+                    Some(sample) => indata.push(sample),
+                    None => {
+                        thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
+                    }
+                }
             }
 
-            let (uuid, start_position) = {
-                let active_sound_readable = active_sound.read().unwrap();
+            false
+        };
 
-                let active_sound_readable = match active_sound_readable.as_ref() {
+        let push_sample =
+            |sample: f32| -> (bool, f64) { (self.output_producer.try_push(sample).is_ok(), 0.0) };
+
+        start_resampling_loop(self.config, fill_indata, push_sample);
+
+        println!("Mic resampling thread stopped");
+    }
+}
+
+pub struct ClipsResampler {
+    pub config: ResampleConfig,
+    pub flag: Arc<AtomicBool>,
+    pub generation_flag: Arc<AtomicBool>,
+    pub clips: Arc<RwLock<HashMap<Uuid, Clip>>>,
+    pub active_sound: Arc<RwLock<Option<ActiveSound>>>,
+    pub clip_buffer_len: usize,
+    pub loaded_clip_consumer: RBConsumer<f32>,
+    pub output_producer: RBProducer<f32>,
+}
+
+impl ClipsResampler {
+    pub fn run(mut self) {
+        let empty_buffer_retry_delay = self.config.empty_buffer_retry_delay;
+
+        let fill_indata = |indata: &mut Vec<f32>, amount: usize| -> bool {
+            'outer: while indata.len() < amount {
+                if !self.flag.load(Ordering::Relaxed) {
+                    return true;
+                }
+
+                if !self.generation_flag.load(Ordering::Relaxed) {
+                    indata.clear();
+                    self.loaded_clip_consumer.clear();
+                    self.generation_flag.store(true, Ordering::Relaxed);
+                }
+
+                let (uuid, start_position) = {
+                    let active_sound_readable = self.active_sound.read().unwrap();
+
+                    let active_sound_readable = match active_sound_readable.as_ref() {
+                        Some(val) => val,
+                        _ => {
+                            drop(active_sound_readable);
+                            thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
+                            continue;
+                        }
+                    };
+
+                    (active_sound_readable.uuid, active_sound_readable.position)
+                };
+
+                let clips_readable = self.clips.read().unwrap();
+
+                let clip = match clips_readable.get(&uuid) {
                     Some(val) => val,
                     _ => {
-                        drop(active_sound_readable);
+                        drop(clips_readable);
+                        let mut active_sound_writable = self.active_sound.write().unwrap();
+                        *active_sound_writable = None;
                         thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
                         continue;
                     }
                 };
 
-                (active_sound_readable.uuid, active_sound_readable.position)
-            };
-
-            let clips_readable = clips.read().unwrap();
-
-            let clip = match clips_readable.get(&uuid) {
-                Some(val) => val,
-                _ => {
-                    drop(clips_readable);
-                    let mut active_sound_writable = active_sound.write().unwrap();
-                    *active_sound_writable = None;
-                    thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
-                    continue;
-                }
-            };
-
-            let (pushed_samples, total_samples) = match clip {
-                Clip::Preloaded(samples) => {
-                    let samples_to_push = amount.min(samples.len() - start_position);
-                    indata.extend_from_slice(
-                        &samples[start_position..(start_position + samples_to_push)],
-                    );
-
-                    (samples_to_push, samples.len())
-                }
-                Clip::Partial {
-                    head,
-                    path: _,
-                    full_amount,
-                } => {
-                    let full_amount = *full_amount;
-                    let preloaded_amount = head.len();
-
-                    let mut pushed_samples = if preloaded_amount > start_position {
-                        let samples_to_push = amount.min(preloaded_amount - start_position);
+                let (pushed_samples, total_samples) = match clip {
+                    Clip::Preloaded(samples) => {
+                        let samples_to_push = amount.min(samples.len() - start_position);
                         indata.extend_from_slice(
-                            &head[start_position..(start_position + samples_to_push)],
+                            &samples[start_position..(start_position + samples_to_push)],
                         );
 
-                        samples_to_push
-                    } else {
-                        0
-                    };
-
-                    drop(clips_readable);
-
-                    if indata.len() < amount && indata.len() + start_position < full_amount {
-                        while indata.len() < amount {
-                            match loaded_clip_consumer.try_pop() {
-                                Some(sample) => {
-                                    pushed_samples += 1;
-                                    indata.push(sample);
-                                }
-                                _ => {
-                                    if !flag.load(Ordering::Relaxed) {
-                                        return true;
-                                    }
-                                    if !generation_flag.load(Ordering::Relaxed) {
-                                        continue;
-                                    }
-                                    thread::sleep(Duration::from_millis(empty_buffer_retry_delay));
-                                }
-                            };
-                        }
+                        (samples_to_push, samples.len())
                     }
+                    Clip::Partial {
+                        head,
+                        path: _,
+                        full_amount,
+                    } => {
+                        let full_amount = *full_amount;
+                        let preloaded_amount = head.len();
 
-                    (pushed_samples, full_amount)
+                        let mut pushed_samples = if preloaded_amount > start_position {
+                            let samples_to_push = amount.min(preloaded_amount - start_position);
+                            indata.extend_from_slice(
+                                &head[start_position..(start_position + samples_to_push)],
+                            );
+
+                            samples_to_push
+                        } else {
+                            0
+                        };
+
+                        drop(clips_readable);
+
+                        if indata.len() < amount && indata.len() + start_position < full_amount {
+                            while indata.len() < amount {
+                                match self.loaded_clip_consumer.try_pop() {
+                                    Some(sample) => {
+                                        pushed_samples += 1;
+                                        indata.push(sample);
+                                    }
+                                    _ => {
+                                        if !self.flag.load(Ordering::Relaxed) {
+                                            return true;
+                                        }
+                                        if !self.generation_flag.load(Ordering::Relaxed) {
+                                            continue 'outer;
+                                        }
+                                        thread::sleep(Duration::from_millis(
+                                            empty_buffer_retry_delay,
+                                        ));
+                                    }
+                                };
+                            }
+                        }
+
+                        (pushed_samples, full_amount)
+                    }
+                    Clip::NotLoaded { error: _, path: _ } => {
+                        let mut active_sound_writable = self.active_sound.write().unwrap();
+                        *active_sound_writable = None;
+                        continue;
+                    }
+                };
+
+                if indata.len() < amount && !indata.is_empty() {
+                    indata.resize(amount, 0.0);
                 }
-                Clip::NotLoaded { error: _, path: _ } => {
-                    let mut active_sound_writable = active_sound.write().unwrap();
-                    *active_sound_writable = None;
+
+                if pushed_samples == 0 {
                     continue;
                 }
-            };
 
-            if indata.len() < amount && !indata.is_empty() {
-                indata.resize(amount, 0.0);
+                let mut active_sound_writable = self.active_sound.write().unwrap();
+
+                if total_samples == start_position + pushed_samples {
+                    *active_sound_writable = None;
+                } else {
+                    active_sound_writable.as_mut().unwrap().position += pushed_samples;
+                }
             }
 
-            if pushed_samples == 0 {
-                continue;
-            }
+            false
+        };
 
-            let mut active_sound_writable = active_sound.write().unwrap();
+        let push_sample = |sample: f32| -> (bool, f64) {
+            (
+                self.output_producer.try_push(sample).is_ok(),
+                self.output_producer.occupied_len() as f64 / self.clip_buffer_len as f64,
+            )
+        };
 
-            if total_samples == start_position + pushed_samples {
-                *active_sound_writable = None;
-            } else {
-                active_sound_writable.as_mut().unwrap().position += pushed_samples;
-            }
-        }
+        start_resampling_loop(self.config, fill_indata, push_sample);
 
-        false
-    };
-
-    let push_sample = |sample: f32| -> (bool, f64) {
-        (
-            output_producer.try_push(sample).is_ok(),
-            output_producer.occupied_len() as f64 / clip_buffer_len as f64,
-        )
-    };
-
-    start_resampling_loop(config, fill_indata, push_sample);
-
-    println!("Clips resampling thread stopped");
+        println!("Clips resampling thread stopped");
+    }
 }
 
 pub fn start_resampling_loop(
