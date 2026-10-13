@@ -384,6 +384,14 @@ fn run_soundpad(
                     }
                 };
             }
+            "stop" => {
+                let mut active_sound_writable = active_sound.write().unwrap();
+                *active_sound_writable = None;
+
+                clip_loading_generation.store(false, Ordering::Relaxed);
+
+                last_output = "Stopped".into();
+            }
             _ => {
                 last_output = format!("No command \"{}\"", parts[0]);
             }
