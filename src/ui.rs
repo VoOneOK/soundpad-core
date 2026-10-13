@@ -19,7 +19,7 @@ pub fn run_ui(context: &UIContext, last_output: &str) -> Result<String, String> 
 
     println!("Commands                                         | State");
     println!(
-        "  exit - exits soundpad                          |   Input: {} ({} * {})",
+        "  exit/q - exits soundpad                        |   Input: {} ({} * {})",
         context.input.name, context.input.channels, context.input.rate,
     );
     println!(

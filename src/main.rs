@@ -307,7 +307,7 @@ fn run_soundpad(
         };
 
         match *first {
-            "exit" => {
+            "exit" | "q" => {
                 break true;
             }
             "restart" => {
